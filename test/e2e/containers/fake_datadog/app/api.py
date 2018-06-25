@@ -5,10 +5,9 @@ import ujson as json
 import zlib
 from os import path
 
+import monitoring
 import pymongo
 from flask import Flask, request, Response, jsonify
-
-import monitoring
 
 app = application = Flask("datadoghq")
 monitoring.monitor_flask(app)
@@ -20,7 +19,7 @@ record_dir = path.join(path.dirname(path.dirname(path.abspath(__file__))), "reco
 
 
 def get_collection(name: str):
-    c = pymongo.MongoClient("127.0.0.1", 27017, connectTimeoutMS=5000)
+    c = pymongo.MongoClient("192.168.254.241", 27017, connectTimeoutMS=5000)
     db = c.get_database("datadog")
     return db.get_collection(name)
 
@@ -84,9 +83,71 @@ def insert_check_run(data: list):
     coll.insert_many(data)
 
 
+def get_series_from_query(q: dict):
+    query = q["query"].replace("avg:", "")
+    open_brace, close_brace = query.index("{"), query.index("}")
+
+    metric_name = query[:open_brace]
+    from_ts, to_ts = int(q["from"]), int(q["to"])
+
+    # tags
+    all_tags = query[open_brace:close_brace]
+
+
+    c = get_collection("series")
+    cur = c.aggregate([
+        {"$match": {"metric": metric_name}}, {"$match": {"$and": [{"metric": metric_name}, {"points.0.0": {"$gt": from_ts}}, {"points.0.0": {"$lt": to_ts}}]}}, {"$unwind": "$points"}, {"$group": {"_id": "$metric", "points": {"$push": "$points"}}}, {"$sort": {"points.0": 1}}
+    ])
+    # points_list = [k["points"] for k in cur]
+    points_list = []
+    for elt in cur:
+        for p in elt["points"]:
+            points_list.append(p)
+
+    print(points_list)
+    result = {
+        "status": "ok",
+        "res_type": "time_series",
+        "series": [
+            {
+                "metric": metric_name,
+                "attributes": {},
+                "display_name": metric_name,
+                "unit": None,
+                "pointlist": points_list,
+                "end": points_list[-1][0] if points_list else 0.,
+                "interval": 600,
+                "start": points_list[0][0] if points_list else 0.,
+                "length": len(points_list),
+                "aggr": None,
+                "scope": "host:vagrant-ubuntu-trusty-64",
+                "expression": query,
+            }
+        ],
+        "from_date": from_ts,
+        "group_by": [
+            "host"
+        ],
+        "to_date": to_ts,
+        "query": "avg:system.cpu.idle{*}by{host}",
+        "message": ""
+    }
+    print(result)
+    return result
+
+
 @app.route("/api/v1/validate", methods=["GET"])
 def validate():
     return Response(status=200)
+
+
+@app.route("/api/v1/query", methods=["GET"])
+def metrics_query():
+    print(request.args)
+    if "query" not in request.args or "from" not in request.args or "to" not in request.args:
+        return Response(status=404)  # TODO check adapted status code
+
+    return jsonify(get_series_from_query(request.args))
 
 
 @app.route("/api/v1/series", methods=["POST"])
@@ -190,4 +251,4 @@ def not_found(_):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(host="0.0.0.0", debug=True, port=5000)
