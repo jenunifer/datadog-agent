@@ -23,7 +23,7 @@ DEFAULT_BUILD_TAGS = [
 
 
 @task
-def build(ctx, rebuild=False, race=False, static=False, use_embedded_libs=False):
+def build(ctx, rebuild=False, race=False, use_embedded_libs=False):
     """
     Build Cluster Agent
 
@@ -32,8 +32,8 @@ def build(ctx, rebuild=False, race=False, static=False, use_embedded_libs=False)
     """
 
     build_tags = get_build_tags(DEFAULT_BUILD_TAGS, [])
-
-    ldflags, gcflags, env = get_build_flags(ctx, static=static, use_embedded_libs=use_embedded_libs)
+    # We only build a binary, so we can build statically
+    ldflags, gcflags, env = get_build_flags(ctx, static=True, use_embedded_libs=use_embedded_libs)
 
     cmd = "go build {race_opt} {build_type} -tags '{build_tags}' -o {bin_name} "
     cmd += "-gcflags=\"{gcflags}\" -ldflags=\"{ldflags}\" {REPO_PATH}/cmd/cluster-agent"
